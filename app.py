@@ -20,6 +20,7 @@ import styling
 import brands
 import hooks
 import effects
+import hlswindow
 import curation
 import facecam_detect
 ROOT=Path(__file__).resolve().parent
@@ -294,7 +295,13 @@ def make(b:dict):
     name='lr_'+uuid.uuid4().hex
     with _yt({'format':'worst[ext=mp4]/bv*[height<=240][ext=mp4]/worst','outtmpl':str(DATA/(name+'.%(ext)s')),'merge_output_format':'mp4',
               'download_ranges':download_range_func(None,[(max(0,c['start']),c['end'])])}) as y:y.download([u])
-    f=next(x for x in DATA.glob(name+'.*') if x.suffix not in ('.part','.ytdl'))
+    f=next((x for x in DATA.glob(name+'.*') if x.suffix not in ('.part','.ytdl')),None)
+    if f is None or not hlswindow.usable(f,(c['end']-c['start'])*.5):     # past 26.5 h of a long HLS VOD: copy its segments (see section)
+     with _yt({'skip_download':True}) as y:fmt=hlswindow.pick(y.extract_info(u,download=False),240,lowest=True)
+     if not fmt:raise RuntimeError('The low-resolution copy is empty.')
+     if f:f.unlink(missing_ok=True)
+     f=DATA/(name+'.mp4');begin=hlswindow.fetch(fmt['url'],max(0,c['start']),c['end'],f,fmt.get('http_headers'))
+     return f,max(0,c['start'])-begin
     return f,0.0
    def choose(pool_clips,locate):
     """Look at the action in the best candidates, re-rank with the learned weights, keep `count`."""
@@ -365,8 +372,15 @@ def make(b:dict):
      name=uuid.uuid4().hex
      for attempt in range(3):     # an FFmpeg crash on one section (seen on some FFmpeg 9.1 builds) must not lose the whole video
       try:
+       a,z=max(0,c['start']-PAD),c['end']+1
        with _yt({'format':source_format(src_h),'merge_output_format':'mp4','outtmpl':str(DATA/(name+'.%(ext)s')),
-                 'download_ranges':download_range_func(None,[(max(0,c['start']-PAD),c['end']+1)])}) as y:y.download([url])
+                 'download_ranges':download_range_func(None,[(a,z)])}) as y:y.download([url])
+       if not hlswindow.usable(DATA/(name+'.mp4'),(z-a)*.5):
+        # Past 26.5 h of a long HLS VOD (Twitch marathons) the MPEG-TS timestamps wrap and FFmpeg's seek keeps nothing:
+        # copy just the playlist segments that cover this moment instead.
+        with _yt({'skip_download':True}) as y:fmt=hlswindow.pick(y.extract_info(url,download=False),src_h)
+        if not fmt:raise RuntimeError('The downloaded part of the video is empty.')
+        hlswindow.fetch(fmt['url'],a,z,DATA/(name+'.mp4'),fmt.get('http_headers'))
        return name
       except Exception:
        if attempt==2:raise
@@ -394,7 +408,13 @@ def make(b:dict):
        c['hook']=smart._heading(model,c['transcript'])
      except Exception:pass
     if sections:
-     sid2=sections[i].result();real=section_start(p,DATA/(sid2+'.mp4'),max(0,c['start']-PAD));start=max(0,c['start']-real);end=min(_dur(DATA/(sid2+'.mp4')),start+c['end']-c['start']);words=c.get('words')
+     try:
+      sid2=sections[i].result();real=section_start(p,DATA/(sid2+'.mp4'),max(0,c['start']-PAD));start=max(0,c['start']-real);end=min(_dur(DATA/(sid2+'.mp4')),start+c['end']-c['start']);words=c.get('words')
+      if end-start<1:raise RuntimeError('the downloaded part is too short')
+     except Exception as e:      # one part that could not be downloaded must not lose the other clips
+      done.append({'file':None,'error':'Could not download this part of the video: '+str(e)[-200:],'start':c['start'],'end':c['end'],'title':c.get('title') or 'Clip %d'%(i+1),
+                   'hook':c.get('hook',''),'score':c['score'],'viral':min(99,c['score']),'axes':axes(c.get('features') or {}),'reason':c.get('reason',''),'srt':None,'visual_review':c.get('visual_review')})
+      save(job,{'clips':list(done),'stage':f'Rendered {i+1}/{len(found)}','progress':.6+.4*(i+1)/len(found)});continue
     else:sid2=sid;start=c['start'];end=c['end'];words=c.get('words')
     if not cam_checked:
      cam_checked=True
