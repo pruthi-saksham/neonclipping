@@ -80,6 +80,15 @@ def transcript_candidates(words,duration,length,count,focus=''):
         out.append({'start':round(start,2),'end':round(end,2),'title':'Dialogue candidate','score':0,'reason':'Transcript-led candidate: review story, joke, opinion or insight','status':'done','proposal_kind':'dialogue','features':{}})
     return out
 
+def overlap(a,b):
+    """Share of the shorter of two {'start','end'} spans that the other one covers (0..1)."""
+    return max(0,min(a['end'],b['end'])-max(a['start'],b['start']))/max(.001,min(a['end']-a['start'],b['end']-b['start']))
+
+def drop_excluded(clips,ranges,limit=.35):
+    """Candidates that do not repeat a span that already has a clip (a previous Make clips run on the same video)."""
+    spans=[{'start':a,'end':z} for a,z in ranges]
+    return [c for c in clips if not any(overlap(c,s)>limit for s in spans)]
+
 def select(clips,count,profile='balanced'):
     """Balance relevance with topic/category variety; reject strongly overlapping repeats."""
     remaining=sorted(clips,key=lambda clip:-clip.get('rank',0));chosen=[]

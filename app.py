@@ -195,6 +195,17 @@ try:LIVE_AUTO_HOURS=max(.25,float(os.environ.get('NEONCLIPPING_LIVE_AUTO_HOURS',
 except ValueError:LIVE_AUTO_HOURS=3.0
 PAD=4.0         # seconds fetched before a section: yt-dlp cuts on a keyframe, export trims exactly
 FAST_OVER=600   # seconds: longer videos go audio-first, short ones are downloaded whole
+MAX_CLIPS=40    # clips per Make clips request (the page offers up to 12; long streams can use more through the API)
+def _cached_audio(url):
+ """The sound track a finished Make clips run on this exact link already downloaded, or None. Lets another run on the same
+ long VOD (e.g. more clips, skipping the moments already made) start without downloading gigabytes again."""
+ for f in sorted(DATA.glob('*.state.json'),key=lambda f:f.stat().st_mtime,reverse=True):
+  try:rec=json.loads(f.read_text(encoding='utf-8'))
+  except (OSError,ValueError):continue
+  if rec.get('status')!='done' or not rec.get('fast_path') or (rec.get('source') or {}).get('url')!=url:continue
+  audio=next((a for a in DATA.glob(f.name.split('.')[0]+'.audio.*') if a.suffix not in ('.part','.ytdl') and '.temp.' not in a.name),None)
+  if audio:return audio
+ return None
 def _yt(opts):
  return ytdl.YDL({'noplaylist':True,'quiet':True,'no_warnings':True,'socket_timeout':20,'retries':3,'fragment_retries':3,'concurrent_fragment_downloads':6,**opts})
 def _dur(p):
@@ -241,11 +252,15 @@ def make(b:dict):
  audio + transcript, then fetch just those video sections. Clips stream into state[job]['clips']."""
  url,src0=app.neon['new_source'](b);save=app.neon['save']
  try:
-  count=max(1,min(12,int(b.get('count',4))));raw_max=float(b.get('max_len',b.get('length',60)));raw_min=float(b.get('min_len',30))
+  count=max(1,min(MAX_CLIPS,int(b.get('count',4))));raw_max=float(b.get('max_len',b.get('length',60)));raw_min=float(b.get('min_len',30))
   if not (math.isfinite(raw_max) and math.isfinite(raw_min)):raise ValueError()
   max_len=max(10,min(180,raw_max));min_len=max(5,min(max_len,raw_min))
  except (TypeError,ValueError,OverflowError):raise HTTPException(400,'Choose a valid clip count and length range.')
  if raw_min>raw_max:raise HTTPException(400,'Minimum clip length is longer than the maximum. Make the minimum smaller or the maximum bigger.')
+ try:      # source spans that already have clips (an earlier run on this video): new moments must not repeat them
+  exclude=[(float(r['start']),float(r['end'])) for r in (b.get('exclude') or [])]
+  if len(exclude)>500 or not all(math.isfinite(a) and math.isfinite(z) and 0<=a<z for a,z in exclude):raise ValueError()
+ except (KeyError,TypeError,ValueError,OverflowError):raise HTTPException(400,'exclude must be a list of up to 500 {start, end} spans in seconds.')
  moments=b.get('moments')
  if moments is not None:
   if not isinstance(moments,list) or not 1<=len(moments)<=40 or not all(isinstance(m,dict) for m in moments):raise HTTPException(400,'Moments must be a list of 1 to 40 items with start and end.')
@@ -349,8 +364,12 @@ def make(b:dict):
     def hook(d):
      t=d.get('total_bytes') or d.get('total_bytes_estimate')
      if t and d.get('status')=='downloading':save(job,{'stage':f"Downloading audio {d['downloaded_bytes']/1048576:.0f}/{t/1048576:.0f} MB",'progress':.02+.1*d['downloaded_bytes']/t})
-    with _yt({'format':'ba[ext=m4a]/ba/worst','outtmpl':str(DATA/(job+'.audio.%(ext)s')),'progress_hooks':[hook]}) as y:y.download([url])
-    p=next(f for f in DATA.glob(job+'.audio.*') if f.suffix not in ('.part','.ytdl'));duration=_dur(p);sid=job
+    p=_cached_audio(url)       # a finished run on this link already has the sound track (several GB for a 48 h VOD)
+    if p:save(job,{'stage':'Reusing the audio downloaded for this link earlier','progress':.11})
+    else:
+     with _yt({'format':'ba[ext=m4a]/ba/worst','outtmpl':str(DATA/(job+'.audio.%(ext)s')),'progress_hooks':[hook]}) as y:y.download([url])
+     p=next(f for f in DATA.glob(job+'.audio.*') if f.suffix not in ('.part','.ytdl'))
+    duration=_dur(p);sid=job
     save(job,{'meta':{'duration':duration},'stage':'Finding moments in audio','progress':.12})
     beat={'live':True,'seen':time.monotonic()}
     def scan_report(f,m):beat['seen']=time.monotonic();save(job,{'stage':m,'progress':.12+.4*f})
@@ -360,8 +379,9 @@ def make(b:dict):
       time.sleep(4)
       if beat['live'] and time.monotonic()-beat['seen']>=4:save(job,{'stage':f'Finding moments in audio · working {int(time.monotonic()-t0)}s (long videos take a few minutes)'})
     threading.Thread(target=heartbeat,daemon=True).start()
-    try:found,engine=ai_found(moments,yt_words,duration) if moments else find(p,duration,count,max_len,scan_report,language,DATA,min_len,False,yt_words,False,W,False,profile,focus_brief,include_phrases,exclude_phrases)
+    try:found,engine=ai_found(moments,yt_words,duration) if moments else find(p,duration,count+len(exclude),max_len,scan_report,language,DATA,min_len,False,yt_words,False,W,False,profile,focus_brief,include_phrases,exclude_phrases)
     finally:beat['live']=False
+    if exclude and not moments:found=curation.drop_excluded(found,exclude)
     found=choose(found,lambda c:lowres_section(url,c))
     if not found:
      save(job,{'status':'done','stage':'No moments matched the transcript filters. Broaden the focus or required phrases.','progress':1,'clips':[],'elapsed_seconds':round(time.monotonic()-began,2)});return
@@ -391,7 +411,8 @@ def make(b:dict):
      save(job,{'stage':'Downloading source ('+quality_label(src_h)+')','progress':.02});sid,p=app.neon['download'](url,job,src_h)
     else:sid,p=src0.stem,src0
     meta=probe(p);duration=meta['duration'];save(job,{'source_id':sid,'meta':meta,'stage':'Finding moments','progress':.1})
-    found,engine=ai_found(moments,yt_words,duration) if moments else find(p,duration,count,max_len,lambda f,m:save(job,{'stage':m,'progress':.1+.5*f}),language,DATA,min_len,True,yt_words,mode=='deep',W,False,profile,focus_brief,include_phrases,exclude_phrases)
+    found,engine=ai_found(moments,yt_words,duration) if moments else find(p,duration,count+len(exclude),max_len,lambda f,m:save(job,{'stage':m,'progress':.1+.5*f}),language,DATA,min_len,True,yt_words,mode=='deep',W,False,profile,focus_brief,include_phrases,exclude_phrases)
+    if exclude and not moments:found=curation.drop_excluded(found,exclude)
     found=choose(found,lambda c:(p,c['start']))
     if not found:
      save(job,{'status':'done','stage':'No moments matched the transcript filters. Broaden the focus or required phrases.','progress':1,'clips':[],'elapsed_seconds':round(time.monotonic()-began,2)});return
