@@ -109,18 +109,19 @@ def snap(c,words,min_len,max_len):
     duration=c['end']-c['start']
     words[:]=[dict(word,end=min(word['end'],duration)) for word in words if 0<=word['start']<duration and word['end']>word['start']]
 
-def find(src,duration,count,length,report,language=None,data=None,min_len=None,motion=True,words=None,deep=False,weights=None,select=True,profile='balanced',brief='',includes=(),excludes=()):
-    """Return up to `count` clips, best first. Always returns `count` when the source is long enough."""
+def find(src,duration,count,length,report,language=None,data=None,min_len=None,motion=True,words=None,deep=False,weights=None,select=True,profile='balanced',brief='',includes=(),excludes=(),skip=()):
+    """Return up to `count` clips, best first. Always returns `count` when the source is long enough.
+    `skip`: (start, end) spans no candidate may come from (moments already clipped, stretches without gameplay)."""
     pool=(count*4+2) if deep else (count*2+1 if count<6 else count+4)
     if not words:pool=count+2 if not deep else min(pool,count*2+2)      # no free transcript: every candidate costs a speech-model pass, so read fewer
     clips=[];extra=excite.seconds_signal(words,duration) if words else None
     weights=weights or curation.profile_weights(learn.DEFAULT,profile)
     while length>=10:
-        clips=rank(src,duration,pool,length,lambda s:report(.0+.3*s/max(duration,1),f'Scanning movement + audio: {int(s)}/{int(duration)}s'),motion,extra)
+        clips=rank(src,duration,pool,length,lambda s:report(.0+.3*s/max(duration,1),f'Scanning movement + audio: {int(s)}/{int(duration)}s'),motion,extra,skip)
         if len(clips)>=min(pool,count) or duration<length*count*.6 and length<=15:break
         length=max(10,length*.7)   # short source: shrink windows until enough clips fit
     if words and profile!='action':
-        dialogue=curation.transcript_candidates(words,duration,length,max(2,pool//2),brief)
+        dialogue=curation.drop_excluded(curation.transcript_candidates(words,duration,length,max(2,pool//2),brief),skip)
         clips=clips[:max(count,pool-len(dialogue))]+dialogue
     model=_model(deep or profile!='action');engine='mixed activity + transcript'
     for i,c in enumerate(clips):

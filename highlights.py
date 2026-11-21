@@ -101,7 +101,9 @@ def _z(x, n, win=120):
     mu = np.convolve(y, k, 'same'); sd = np.sqrt(np.maximum(np.convolve(y * y, k, 'same') - mu * mu, 0)) + 1e-6
     return np.clip((y - mu) / sd / 3.5, 0, 1)
 
-def rank(source, duration, count=4, length=30, report=lambda seconds: None, motion_on=True, extra=None):
+def rank(source, duration, count=4, length=30, report=lambda seconds: None, motion_on=True, extra=None, skip=()):
+    """`skip`: (start, end) spans that must not be clipped (already clipped, or no gameplay there). They are never picked, so
+    the `count` windows all come from the rest of the source, however much of it is skipped."""
     with ThreadPoolExecutor(max_workers=2) as pool:
         m = pool.submit(_motion, source, duration, report) if motion_on else pool.submit(lambda: (np.zeros(0), np.zeros(0))); a = pool.submit(_audio, source)
         (flow, cuts), (rms, hf) = m.result(), a.result()
@@ -115,10 +117,14 @@ def rank(source, duration, count=4, length=30, report=lambda seconds: None, moti
         e = np.zeros(n); e[:min(n, len(extra))] = extra[:n]
         sig = .75 * sig + .25 * e
     width = min(n, 7); smooth = np.convolve(sig, np.ones(width) / width, 'same')
+    for a, b in skip:                       # the signal is >= 0, so -1 sorts skipped seconds after everything else
+        smooth[max(0, int(a)):max(0, int(b) + 1)] = -1.0
     length = min(float(length), duration); clips = []
     for center in np.argsort(smooth)[::-1]:
+        if smooth[center] < 0: break          # only skipped spans are left
         start = max(0, min(float(center) - length * .4, duration - length)); end = min(duration, start + length)
         if any(min(end, c['end']) - max(start, c['start']) > 0 for c in clips): continue
+        if any(min(end, b) - max(start, a) > .35 * (end - start) for a, b in skip): continue
         parts = {'motion': motion, 'audio jump': loud, 'shouting': shout, 'cuts': cut}
         lo, hi = int(start), max(int(start) + 1, int(end))
         top = sorted(parts, key=lambda k: -parts[k][int(center) - 3:int(center) + 4].mean() if len(parts[k]) else 0)[:2]

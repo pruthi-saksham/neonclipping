@@ -38,6 +38,22 @@ class ChunkedAudioTests(unittest.TestCase):
             np.testing.assert_allclose(hf, ref_hf, rtol=1e-5, atol=1e-7)
             self.assertGreater(rms.max() / rms.min(), 2)  # the loud parts are really louder
 
+    def test_rank_never_picks_skipped_spans_and_still_fills_the_count(self):
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / 'b.m4a'
+            # quiet pink noise with loud bursts at 40 s, 100 s, 160 s, 220 s and 280 s
+            loud = '+'.join(f'between(t,{t},{t + 3})' for t in (40, 100, 160, 220, 280))
+            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', f"anoisesrc=c=pink:a=0.5:d=330,volume='if({loud},1,0.03)':eval=frame",
+                            '-c:a', 'aac', str(src)], check=True, capture_output=True)
+            plain = highlights.rank(src, 330, count=3, length=20, motion_on=False)
+            self.assertTrue(all(any(c['start'] <= t <= c['end'] for t in (40, 100, 160, 220, 280)) for c in plain))
+            skip = [(90, 175)]                   # covers the bursts at 100 s and 160 s
+            picked = highlights.rank(src, 330, count=3, length=20, motion_on=False, skip=skip)
+            self.assertEqual(len(picked), 3)
+            for c in picked:
+                self.assertFalse(c['start'] < 175 and c['end'] > 90, c)
+            self.assertEqual(sorted(any(c['start'] <= t <= c['end'] for c in picked) for t in (40, 220, 280)), [True, True, True])
+
     def test_no_sound_gives_empty_signals(self):
         with tempfile.TemporaryDirectory() as d:
             src = Path(d) / 'v.mp4'
