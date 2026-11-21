@@ -19,6 +19,7 @@ from captions import transcribe, large_v3, write as write_captions, ANIMS, ascii
 import styling
 import brands
 import hooks
+import effects
 import curation
 import facecam_detect
 ROOT=Path(__file__).resolve().parent
@@ -145,23 +146,35 @@ def export(b:dict):
       a=float(word['start']);z=float(word['end']);text=str(word['text'])[:100]
       if math.isfinite(a) and math.isfinite(z) and 0<=a<z<=end-start+.1:words.append({'start':a,'end':z,'text':text})
     else:words=transcribe(src,start,end,DATA,lambda msg:state[job].update(message=msg),b.get('language') or None)['words']
-   dur=end-start;g2=graph
+   fx=None;fx_error=None
+   if effects.wanted(b):      # optional sound effects / punch-in zooms / slow motion (effects.py)
+    state[job].update(message='Placing sound effects, zooms and slow motion')
+    try:fx=effects.build(b,src,start,end,words,width,height,layout,DATA,job,plan.template if plan else 'none',top,fps)
+    except Exception as e:fx_error=str(e)[-300:]     # a failed effect must not lose the clip: it is exported without
+   cap_words=fx.words if fx else words      # slow motion moves the caption timings; the saved words stay in source time
+   dur=fx.duration if fx else end-start;g2=graph
    if plan:plan.data=DATA;plan.job=job;g2=plan.graph(graph,src,width,height,dur)
    placement=text_positions(layout,top,position,width,height);hook_y=placement['hook_y'];caption_pos=placement['caption_y'];hook_text=str(b.get('hook',''))
    if plan and plan.template!='none':caption_pos=plan.template_caption_y;hook_text=''
-   ass,srt=write_captions(words,style,DATA,job,hook_text,caption_pos,hook_y,width,height,b.get('caption_anim') or 'highlight',b)
-   if words:
+   ass,srt=write_captions(cap_words,style,DATA,job,hook_text,caption_pos,hook_y,width,height,b.get('caption_anim') or 'highlight',b)
+   if cap_words:
     (DATA/(job+'.vtt')).write_text(subtitles.write_track(subtitles.parse_track((DATA/srt).read_text(encoding='utf-8'),allow_overlap=True),'vtt',allow_overlap=True),encoding='utf-8')
    if plan:styling.append_ass(DATA/ass,plan,dur)
-   fc=g2+f';[base]ass={ass}[v]'
+   vlabel='[base]'
+   if fx:g2,vlabel=fx.video(g2)
+   fc=g2+f';{vlabel}ass={ass}[v]'
    af,amap=plan.audio(dur) if plan else (None,None)
-   if af:fc+=';'+af
+   if af:fc+=';'+(fx.voice(af) if fx else af)
+   fade=hooks.fade_on(b) and dur>1.2
+   if fx:
+    extra,amap=fx.audio(amap,plan.next_input if plan else 1,fade)
+    if extra:fc+=';'+extra
    vmap='[v]';fade_af=None
-   if hooks.fade_on(b) and dur>1.2:
+   if fade:
     fc+=f';[v]fade=t=in:st=0:d=0.25,fade=t=out:st={max(0,dur-0.3):.2f}:d=0.3[vfade]';vmap='[vfade]'
-    if not af:fade_af=f'afade=t=in:st=0:d=0.25,afade=t=out:st={max(0,dur-0.3):.2f}:d=0.3'
+    if not af and not amap:fade_af=f'afade=t=in:st=0:d=0.25,afade=t=out:st={max(0,dur-0.3):.2f}:d=0.3'
    state[job].update(message='Rendering vertical clip with '+style+' captions' if words else 'Rendering vertical clip')
-   base=['ffmpeg','-y','-v','error','-ss',str(start),'-t',str(end-start),'-i',str(src),*(plan.inputs if plan else []),'-filter_complex',fc,'-map',vmap,'-map',amap or '0:a?',*(['-af',fade_af] if fade_af else []),'-t',str(dur),'-c:a','aac','-b:a','160k','-movflags','+faststart']
+   base=['ffmpeg','-y','-v','error','-ss',str(start),'-t',str(end-start),'-i',str(src),*(plan.inputs if plan else []),*(fx.inputs if fx else []),'-filter_complex',fc,'-map',vmap,'-map',amap or '0:a?',*(['-af',fade_af] if fade_af else []),'-t',str(dur),'-c:a','aac','-b:a','160k','-movflags','+faststart']
    if fps:base+=['-r',str(fps),'-fps_mode','cfr']
    for encoder in encoders.h264(cq=20,x264_preset='fast',nv_preset='p5'):
     # NVIDIA: also decode the source on the GPU (4K VP9/AV1 on the CPU is what pinned it at 100%); retry on the CPU if that fails.
@@ -171,6 +184,8 @@ def export(b:dict):
     if r.returncode==0:break
    if r.returncode:raise RuntimeError(r.stderr[-900:])
    finished={'status':'done','file':job,'meta':probe(out),'encoder':encoder[1],'caption_words':len(words),'srt':f'/text/{job}/srt' if words else None}
+   if fx or fx_error:finished.update(effects=fx.summary() if fx else None,effects_error=fx_error)
+   if fx and fx.bed:fx.bed.unlink(missing_ok=True)
    (DATA/(job+'.json')).write_text(json.dumps({'source':id,'settings':{**b,'words':words},'result':finished},indent=2),encoding='utf-8')
    state[job]=finished
   except Exception as e:state[job]={'status':'error','error':str(e)}

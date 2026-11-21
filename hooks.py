@@ -1,7 +1,8 @@
 """Readable opening headings on bright gameplay, blur and facecam layouts."""
 import math
 import camfx
-KEYS=('hook_duration','hook_background','hook_enabled','fade_inout')+camfx.KEYS
+import effects
+KEYS=('hook_duration','hook_background','hook_enabled','fade_inout')+camfx.KEYS+effects.KEYS
 def fade_on(body):
     """Optional 0.3 s fade in/out of picture and sound."""
     value=body.get('fade_inout',False)
@@ -17,7 +18,7 @@ def enabled(body):
 def settings(body):
     value=body.get('hook_duration',8);duration=float(8 if value in (None,'') else value)
     if not math.isfinite(duration) or not 2<=duration<=60:raise ValueError('Hook duration must be 2–60 seconds.')
-    enabled(body);fade_on(body);camfx.settings(body)
+    enabled(body);fade_on(body);camfx.settings(body);effects.settings(body)
     background=body.get('hook_background',True)
     if not isinstance(background,bool):raise ValueError('Hook background must be on or off.')
     return duration,background

@@ -202,6 +202,24 @@ For YouTube links every clip uses YouTube's own word-timed captions, in every la
 - **Import captions:** drop an `.srt` or `.ass` file; the words are timed to the clip and can be edited.
 - All of it works in Make clips, single exports and "Edit saved clips" (including "apply to all clips of this video").
 
+## Sound effects, punch-in zooms and slow motion (optional, API)
+
+Off by default. Add these fields to a `/make` or `/export` request (`effects.py`):
+
+| Field | What it adds |
+|---|---|
+| `"sfx": true` | A whoosh on the opening, a hit on every punch-in, a swell into a boom on the slow-motion beat, and up to three soft pops on shouted words. The sounds are synthesised locally with numpy: no sample packs, nothing downloaded. |
+| `"zoom": true` | 1–4 quick punch-in zooms (ease in, hold, ease out) on the clip's loudest or most exclaimed moments. Face-on-top layouts zoom toward the facecam. |
+| `"slowmo": true` | The peak moment plays at half speed with a deeper voice, a white flash, a short camera shake, a vignette and a slow push-in. Caption timings move with it, so they stay in sync. |
+| `"sfx_volume": 0–1.5` | Sound-effect loudness (default 1). |
+
+Moments are picked from the clip's own loudness plus its word-timed transcript. Zoom, shake, flash and vignette are applied to the finished layout before the captions are burned in, so captions stay sharp. Templates keep their card still (slow motion and sound effects still apply). Example:
+
+```bash
+curl -X POST http://127.0.0.1:8770/make -H 'Content-Type: application/json' \
+  -d '{"url":"https://www.twitch.tv/videos/2934967396","count":7,"min_len":25,"max_len":55,"layout":"stack","sfx":true,"zoom":true,"slowmo":true}'
+```
+
 ## Find my facecam
 
 The **Find my facecam** chip (or "find it automatically when I press Make clips") looks at 14 frames of the video, finds rectangles whose border stays in the same place, and keeps the one that holds a face (small local YuNet face model, MIT licence, `models/`). It rejects the game's minimap and HUD panels, finds webcams in a corner or floating on a side, and answers "no facecam" when it is not sure. Measured on 30 real saved streams: found the webcam on every stream that has one; clean "not found" on trailers and talking-head videos. Not perfect: some boxes cover only the face inside a framed webcam.
