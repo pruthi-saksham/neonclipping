@@ -9,7 +9,7 @@ Signals (all local, no model download):
 The source is split into time chunks decoded by parallel FFmpeg processes (decode is the bottleneck).
 Candidates only; semantic re-ranking happens in smart.py.
 """
-import os, subprocess
+import os, subprocess, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np, cv2
 
@@ -59,17 +59,38 @@ def _motion(source, duration, report):
     c = np.concatenate([parts[s][1] for s in starts]) if starts else np.zeros(0)
     return f, c
 
+AUDIO_CHUNK_SECONDS = 600     # the sound is analysed 10 minutes at a time
+
+
 def _audio(source):
+    """Per-second loudness (RMS) and shout share (2-4 kHz energy) of the whole source.
+    The decoded sound is read and analysed one chunk at a time: a 47-hour stream used to need over 20 GB of memory here
+    (all samples plus the FFT of all of them), now a few hundred MB. Each second only uses its own samples, so the result
+    is the same as analysing everything at once."""
     cmd = ['ffmpeg', '-nostdin', '-v', 'error', '-i', str(source), '-vn', '-ac', '1', '-ar', '8000', '-f', 's16le', 'pipe:1']
-    raw = subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL, timeout=4 * 3600).stdout
-    x = np.frombuffer(raw[:len(raw) // 2 * 2], np.int16).astype(np.float32) / 32768
-    n = len(x) // 8000
-    if n == 0: return np.zeros(0), np.zeros(0)
-    x = x[:n * 8000].reshape(n, 8000)
-    rms = np.sqrt((x ** 2).mean(1))
-    spec = np.abs(np.fft.rfft(x * np.hanning(8000), axis=1)) ** 2          # 1 Hz bins
-    hf = spec[:, 2000:4000].sum(1) / (spec.sum(1) + 1e-9)
-    return rms, hf
+    window = np.hanning(8000)
+    rms, hf = [], []
+    deadline = time.monotonic() + 4 * 3600
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        while True:
+            raw = proc.stdout.read(8000 * 2 * AUDIO_CHUNK_SECONDS)     # whole seconds; only the last chunk can be shorter
+            if time.monotonic() > deadline:
+                raise subprocess.TimeoutExpired(cmd, 4 * 3600)
+            n = len(raw) // 16000
+            if n == 0:
+                break
+            x = (np.frombuffer(raw[:n * 16000], np.int16).astype(np.float32) / 32768).reshape(n, 8000)
+            rms.append(np.sqrt((x ** 2).mean(1)))
+            spec = np.abs(np.fft.rfft(x * window, axis=1)) ** 2          # 1 Hz bins
+            hf.append(spec[:, 2000:4000].sum(1) / (spec.sum(1) + 1e-9))
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.stdout.close()
+        proc.wait()
+    if not rms: return np.zeros(0), np.zeros(0)
+    return np.concatenate(rms), np.concatenate(hf)
 
 def _z(x, n, win=120):
     """Local z-score vs a rolling baseline, clipped to 0..1 (z of 3.5 = 1)."""
