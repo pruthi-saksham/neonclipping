@@ -44,9 +44,24 @@ class ApiTests(unittest.TestCase):
             (d / 'a1.audio.temp.mp4').write_bytes(b'x')
             (d / 'b2.state.json').write_text(json.dumps({'status': 'error', 'fast_path': True, 'source': {'url': 'V'}}))
             (d / 'b2.audio.mp4').write_bytes(b'x')
+            (d / 'c3.state.json').write_text(json.dumps({'status': 'error', 'fast_path': True, 'source': {'url': 'X'}, 'meta': {'duration': 99.0}}))
+            (d / 'c3.audio.mp4').write_bytes(b'x')
             self.assertEqual(self.app._cached_audio('U'), d / 'a1.audio.mp4')
-            self.assertIsNone(self.app._cached_audio('V'))      # that run failed: its audio may be incomplete
+            self.assertIsNone(self.app._cached_audio('V'))      # failed before its audio was in: may be incomplete
+            self.assertEqual(self.app._cached_audio('X'), d / 'c3.audio.mp4')   # failed later: the audio is complete
             self.assertIsNone(self.app._cached_audio('W'))
+
+
+class FitWordsTests(unittest.TestCase):
+    def test_words_past_a_shortened_clip_are_trimmed(self):
+        import subtitles
+        words = [{'start': 1.0, 'end': 1.4, 'text': 'a'}, {'start': 9.8, 'end': 10.6, 'text': 'b'}, {'start': 10.2, 'end': 10.5, 'text': 'c'},
+                 {'start': 'x', 'end': 1, 'text': 'bad'}]
+        fitted = subtitles.fit_words(words, 10.0)
+        self.assertEqual([(w['text'], w['end']) for w in fitted], [('a', 1.4), ('b', 10.0)])
+        subtitles.validate_words(fitted, 10.0)        # what export checks: no longer refused
+        with self.assertRaises(ValueError):
+            subtitles.validate_words(words[:3], 10.0)  # the old behaviour that ended the whole batch
 
 
 if __name__ == '__main__':

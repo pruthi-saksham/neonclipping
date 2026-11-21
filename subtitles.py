@@ -49,6 +49,18 @@ def write_track(items, format='srt', shift=0, duration=None, allow_overlap=False
         blocks.append(prefix+stamp(item['start'])+' --> '+stamp(item['end'])+'\n'+item['text'])
     return ('WEBVTT\n\n' if format=='vtt' else '')+'\n\n'.join(blocks)+'\n'
 
+def fit_words(words,duration):
+    """Words of a clip that ended earlier than planned (its downloaded part came back short): keep the ones that start inside
+    it and end them at the new end, instead of the export refusing the whole clip."""
+    out=[]
+    for word in words or []:
+        try:start,end=float(word['start']),float(word['end'])
+        except (KeyError,TypeError,ValueError):continue
+        if not (math.isfinite(start) and math.isfinite(end)) or not 0<=start<duration-.05:continue
+        end=min(end,duration)
+        if end>start:out.append({**word,'start':start,'end':end})
+    return out
+
 def validate_words(words,duration,max_words=20000):
     if not isinstance(words,list) or len(words)>max_words:raise ValueError(f'Provide at most {max_words} subtitle words.')
     out=[]

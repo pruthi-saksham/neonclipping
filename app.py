@@ -202,7 +202,8 @@ def _cached_audio(url):
  for f in sorted(DATA.glob('*.state.json'),key=lambda f:f.stat().st_mtime,reverse=True):
   try:rec=json.loads(f.read_text(encoding='utf-8'))
   except (OSError,ValueError):continue
-  if rec.get('status')!='done' or not rec.get('fast_path') or (rec.get('source') or {}).get('url')!=url:continue
+  finished=rec.get('status')=='done' or (rec.get('meta') or {}).get('duration')     # 'duration' is saved once the audio is in and probed
+  if not finished or not rec.get('fast_path') or (rec.get('source') or {}).get('url')!=url:continue
   audio=next((a for a in DATA.glob(f.name.split('.')[0]+'.audio.*') if a.suffix not in ('.part','.ytdl') and '.temp.' not in a.name),None)
   if audio:return audio
  return None
@@ -418,6 +419,11 @@ def make(b:dict):
      save(job,{'status':'done','stage':'No moments matched the transcript filters. Broaden the focus or required phrases.','progress':1,'clips':[],'elapsed_seconds':round(time.monotonic()-began,2)});return
     save(job,{'engine':engine,'stage':'Rendering clips','progress':.6,'candidates':len(found)})
    done=[];cam_use,game_use,cam_checked=cam,game,not b.get('cam_auto')
+   def failed(i,c,message):
+    """Record one clip that could not be made and carry on with the others (the page shows "Failed: ...")."""
+    done.append({'file':None,'error':message,'start':c['start'],'end':c['end'],'title':c.get('title') or 'Clip %d'%(i+1),'hook':c.get('hook',''),'score':c['score'],
+                 'viral':min(99,c['score']),'axes':axes(c.get('features') or {}),'reason':c.get('reason',''),'srt':None,'visual_review':c.get('visual_review')})
+    save(job,{'clips':list(done),'stage':f'Rendered {i+1}/{len(found)}','progress':.6+.4*(i+1)/len(found)})
    uploader=str((info.get('channel') or info.get('uploader') or '')) if url else ''
    for i,c in enumerate(found):
     if not moments and c.get('transcript') and b.get('hook_enabled') is not False:
@@ -433,9 +439,7 @@ def make(b:dict):
       sid2=sections[i].result();real=section_start(p,DATA/(sid2+'.mp4'),max(0,c['start']-PAD));start=max(0,c['start']-real);end=min(_dur(DATA/(sid2+'.mp4')),start+c['end']-c['start']);words=c.get('words')
       if end-start<1:raise RuntimeError('the downloaded part is too short')
      except Exception as e:      # one part that could not be downloaded must not lose the other clips
-      done.append({'file':None,'error':'Could not download this part of the video: '+str(e)[-200:],'start':c['start'],'end':c['end'],'title':c.get('title') or 'Clip %d'%(i+1),
-                   'hook':c.get('hook',''),'score':c['score'],'viral':min(99,c['score']),'axes':axes(c.get('features') or {}),'reason':c.get('reason',''),'srt':None,'visual_review':c.get('visual_review')})
-      save(job,{'clips':list(done),'stage':f'Rendered {i+1}/{len(found)}','progress':.6+.4*(i+1)/len(found)});continue
+      failed(i,c,'Could not download this part of the video: '+str(e)[-200:]);continue
     else:sid2=sid;start=c['start'];end=c['end'];words=c.get('words')
     if not cam_checked:
      cam_checked=True
@@ -461,7 +465,10 @@ def make(b:dict):
       ws=[w for w in ws if w['text']]
      body['words']=ws
      save(job,{'caption_source':'YouTube captions' if url else 'Saved full-source transcript'})
-    ej=export(body)['job']
+    body['words']=subtitles.fit_words(body.get('words'),end-start)     # a part that came back short ends the clip earlier
+    try:ej=export(body)['job']
+    except HTTPException as e:       # one clip the renderer refuses must not lose the others
+     failed(i,c,'Could not render this clip: '+str(e.detail)[-200:]);continue
     while state.get(ej,{}).get('status')=='running':time.sleep(.7)
     r=state[ej]
     done.append({'viral':min(99,c['score']),'axes':axes(c.get('features') or {}),'file':ej,'start':c['start'],'end':c['end'],'title':c.get('title') or 'Clip %d'%(i+1),'hook':c.get('hook',''),'score':c['score'],'reason':c.get('reason',''),
