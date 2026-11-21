@@ -57,3 +57,6 @@ __pycache__/
 !.gitattributes
 !.github/workflows/
 !.github/workflows/*
+
+!clips/
+!clips/*.mp4
