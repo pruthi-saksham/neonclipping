@@ -227,6 +227,25 @@ def section_start(audio_file,section_file,expected):
  corr=np.fft.irfft(np.fft.rfft(hay,size)*np.conj(np.fft.rfft(needle,size)),size)[:len(hay)-len(needle)+1]
  return a0+int(np.argmax(corr))/8000
 
+def part_shortfall(audio_file,part,asked_start,need_end):
+ """Seconds by which a downloaded part stops before `need_end` (a time in the source); 0 when it gets there."""
+ try:return max(0.,need_end-(section_start(audio_file,part,asked_start)+_dur(part)))
+ except Exception:return 0.     # cannot tell: keep the part as it is
+
+def download_part(url,fmt,a,z,audio_file=None,need_end=None):
+ """Download source seconds a..z of `url` as DATA/<name>.mp4 and return the name.
+ yt-dlp starts a part on the keyframe before `a` and keeps (z-a) seconds from there. On long Twitch VODs (seen from about
+ 20 h in) that start can be a whole 10 s segment early, so the part stopped seconds before the moment ended and the clip
+ lost its last words. With the source's sound track at hand the part is measured, and asked again, longer, if it stops early."""
+ from yt_dlp.utils import download_range_func
+ for attempt in range(3):
+  name=uuid.uuid4().hex;f=DATA/(name+'.mp4')       # a new file each time: yt-dlp skips a file that is already there
+  with _yt({'format':fmt,'merge_output_format':'mp4','outtmpl':str(DATA/(name+'.%(ext)s')),
+            'download_ranges':download_range_func(None,[(a,z)])}) as y:y.download([url])
+  short=part_shortfall(audio_file,f,a,need_end) if audio_file and need_end and hlswindow.usable(f,(z-a)*.5) else 0
+  if short<=0 or attempt==2:return name
+  f.unlink(missing_ok=True);z+=short+2
+
 def axes(f):
  """Four readable 0-100 axes from the scoring features (None = not measured for this clip)."""
  def mean(keys):
@@ -388,14 +407,11 @@ def make(b:dict):
      save(job,{'status':'done','stage':'No moments matched the transcript filters. Broaden the focus or required phrases.','progress':1,'clips':[],'elapsed_seconds':round(time.monotonic()-began,2)});return
     save(job,{'engine':engine+' (audio-first)','stage':'Fetching only the chosen sections','progress':.58,'candidates':len(found)})
     from concurrent.futures import ThreadPoolExecutor
-    from yt_dlp.utils import download_range_func
     def section(i,c):
-     name=uuid.uuid4().hex
      for attempt in range(3):     # an FFmpeg crash on one section (seen on some FFmpeg 9.1 builds) must not lose the whole video
       try:
        a,z=max(0,c['start']-PAD),c['end']+1
-       with _yt({'format':source_format(src_h),'merge_output_format':'mp4','outtmpl':str(DATA/(name+'.%(ext)s')),
-                 'download_ranges':download_range_func(None,[(a,z)])}) as y:y.download([url])
+       name=download_part(url,source_format(src_h),a,z,p,c['end']+.5)
        if not hlswindow.usable(DATA/(name+'.mp4'),(z-a)*.5):
         # Past 26.5 h of a long HLS VOD (Twitch marathons) the MPEG-TS timestamps wrap and FFmpeg's seek keeps nothing:
         # copy just the playlist segments that cover this moment instead.
