@@ -78,7 +78,10 @@ Every candidate moment is scored from several signals, then the best ones are ke
 - **Min / Max clip length** (e.g. 30–80 s). Clips end on a sentence.
 - **Facecam position presets** (top-left, top-right, bottom-left, bottom-right, bottom-centre, none) for the usual streamer layouts, remembered between sessions. Or draw the face and gameplay boxes yourself in the editor.
 - **11 native layouts:** camera above/below gameplay, blurred fill, full-screen crop, gameplay only, four corner overlays, circle facecam and side-by-side. Independent face/game selection and a face-size slider. Preview-only platform safe zones.
-- Caption styles: GTA Neon, Impact, Clean, Hormozi and MrBeast. Word-timed, editable words, SRT export.
+- Caption styles: GTA Neon, Impact, Clean, Hormozi, MrBeast and Yellow pop. Word-timed, editable words, SRT export.
+  Yellow pop (`"caption_style": "yellow_pop"`) is white Montserrat ExtraBold in capitals with the spoken word in yellow, 2-3 words a
+  line that pop in, centred on the edge between the facecam and the gameplay (set `caption_y` to place it elsewhere). The font
+  ships in `fonts/` under the SIL Open Font License, so it looks the same on every computer.
 - **Opening headings:** eight seconds by default, adjustable from 2–60 seconds, with black backing for bright gameplay and facecam layouts. Use **Improve opening heading** to write a grounded curiosity question from the selected transcript. Existing clips can apply the new look without downloading or finding moments again.
 - **Moment mix:** Balanced combines activity and transcript-led proposals; Action favours energy; Dialogue favours story, humour and insights. Final selection reduces overlapping and repetitive moments. Balanced/Dialogue prefer an already-installed Gemma 4 local judge; other local models remain a fallback. This changes curation rules and prompts, not foundation-model weights.
 - **Custom captions:** installed font family, size, text/active/outline colours, words per caption and local saved profiles. Import SRT/ASS/WebVTT or paste subtitle text, adjust word timings, split/merge and shift captions. Within-cue word timings from imported files are estimated. Download WebVTT alongside SRT.

@@ -57,7 +57,7 @@ class Anims(unittest.TestCase):
 
     def test_no_control_characters_in_any_animation(self):
         for anim in captions.ANIMS:
-            for style in ('gta', 'bold', 'clean', 'hormozi', 'mrbeast'):
+            for style in captions.STYLE_NAMES:
                 ev, text = self.render(anim, style)
                 self.assertTrue(ev, (anim, style))
                 self.assertFalse([c for c in text if ord(c) < 32 and c not in chr(10) + chr(9)], (anim, style))

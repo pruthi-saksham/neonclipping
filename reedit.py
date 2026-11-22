@@ -179,7 +179,8 @@ def attach(app,data,state,probe,export,save):
                 appearance(settings)
                 hook_settings(settings)
                 geometry(settings.get('layout','stack'),settings.get('top',.32),width,height)
-                if settings.get('caption_style','gta') not in ('gta','bold','clean','hormozi','mrbeast'):raise ValueError()
+                from captions import STYLE_NAMES
+                if settings.get('caption_style','gta') not in STYLE_NAMES:raise ValueError()
                 if not 400<=int(settings.get('caption_y',1450))<=1750:raise ValueError()
                 for key in ('cam','game'):
                     vals=[float(settings[key][k]) for k in ('x','y','w','h')]

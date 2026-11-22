@@ -14,8 +14,8 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
 import uvicorn
 import math
-from layouts import CATALOG, geometry, render_graph, text_positions, output_settings
-from captions import transcribe, large_v3, write as write_captions, ANIMS, ascii_fold, collapse_repeats
+from layouts import CATALOG, geometry, render_graph, text_positions, output_settings, seam_y
+from captions import transcribe, large_v3, write as write_captions, ANIMS, ascii_fold, collapse_repeats, STYLE_NAMES, SEAM_STYLES, font_dir
 import styling
 import brands
 import hooks
@@ -109,7 +109,7 @@ def export(b:dict):
  layout=b.get('layout','stack')
  if layout not in {x[0] for x in CATALOG}:raise HTTPException(400,'Choose a valid layout.')
  style=b.get('caption_style','gta')
- if style not in ('gta','bold','clean','hormozi','mrbeast'):raise HTTPException(400,'Choose a valid caption style.')
+ if style not in STYLE_NAMES:raise HTTPException(400,'Choose a valid caption style.')
  if (b.get('caption_anim') or 'highlight') not in ANIMS:raise HTTPException(400,'Choose a valid caption animation.')
  try:
   top=float(b.get('top',.32));position=int(b.get('caption_y',1450))
@@ -156,6 +156,9 @@ def export(b:dict):
    dur=fx.duration if fx else end-start;g2=graph
    if plan:plan.data=DATA;plan.job=job;g2=plan.graph(graph,src,width,height,dur)
    placement=text_positions(layout,top,position,width,height);hook_y=placement['hook_y'];caption_pos=placement['caption_y'];hook_text=str(b.get('hook',''))
+   if style in SEAM_STYLES and b.get('caption_y') in (None,''):     # these styles sit on the facecam / gameplay edge
+    seam=seam_y(layout,top,width,height,m['w']/max(1,m['h']))
+    if seam is not None:caption_pos=max(round(60*height/1920),seam)
    if plan and plan.template!='none':caption_pos=plan.template_caption_y;hook_text=''
    ass,srt=write_captions(cap_words,style,DATA,job,hook_text,caption_pos,hook_y,width,height,b.get('caption_anim') or 'highlight',b)
    if cap_words:
@@ -163,7 +166,7 @@ def export(b:dict):
    if plan:styling.append_ass(DATA/ass,plan,dur)
    vlabel='[base]'
    if fx:g2,vlabel=fx.video(g2)
-   fc=g2+f';{vlabel}ass={ass}[v]'
+   font_dir(DATA);fc=g2+f';{vlabel}ass={ass}:fontsdir=fonts[v]'      # fonts/ next to the job files: see captions.font_dir
    af,amap=plan.audio(dur) if plan else (None,None)
    if af:fc+=';'+(fx.voice(af) if fx else af)
    fade=hooks.fade_on(b) and dur>1.2

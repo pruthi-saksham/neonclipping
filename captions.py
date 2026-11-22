@@ -125,8 +125,26 @@ STYLES={
  'bold':('&H00FFFFFF&','&H003DF3CB&',r'\bord6\shad4',72,0),
  'hormozi':('&H00FFFFFF&','&H00FFFF00&',r'\bord7\3c&H00000000&\shad4\4c&H80000000&',84,112),
  'mrbeast':('&H0000FFFF&','&H000066FF&',r'\bord9\3c&H00000000&\shad5\4c&H00000000&',90,112),
+ # white Montserrat ExtraBold, the spoken word in yellow (#FED50B), thin black outline; 2-3 words that pop in as a line
+ 'yellow_pop':('&H00FFFFFF&','&H000BD5FE&',r'\bord6\3c&H00000000&\shad2\4c&H00000000&',80,0),
 }
 STYLE_NAMES=tuple(STYLES)+('clean',)
+STYLE_FONTS={'yellow_pop':'Montserrat ExtraBold'}     # shipped in fonts/ (SIL Open Font License), see font_dir()
+STYLE_WORDS={'yellow_pop':3}                          # words per caption line when the request does not set it
+LINE_POP={'yellow_pop':(90,100)}                      # the line appears at 90 % and grows to full size in 100 ms
+SEAM_STYLES=('yellow_pop',)                           # sits on the facecam / gameplay edge unless caption_y is given
+
+def font_dir(data):
+    """The fonts the caption styles need, copied next to the job files: FFmpeg runs there and libass reads them through
+    the ass filter's fontsdir, so the look is the same on Windows, macOS and Linux without installing anything."""
+    from pathlib import Path
+    import shutil
+    target=Path(data)/'fonts'
+    for f in (Path(__file__).resolve().parent/'fonts').glob('*.ttf'):
+        dest=target/f.name
+        if not dest.exists() or dest.stat().st_size!=f.stat().st_size:
+            target.mkdir(parents=True,exist_ok=True);shutil.copyfile(f,dest)
+    return target
 
 def safe(text):return str(text).replace('\\','/').replace('{','(').replace('}',')').replace('\n',' ')
 
@@ -169,9 +187,11 @@ def write(words,style,folder,name,hook='',position=1450,hook_y=300,width=1080,he
          '[V4+ Styles]','Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding',
          'Style: Main,Arial,72,&H00FFFFFF,&H0000FFFF,&H00100B18,&H99000000,-1,0,0,0,100,100,0,0,1,5,2,5,50,50,0,1',
          '[Events]','Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text']
-    if custom.get('caption_font'):ass[7]=ass[7].replace('Main,Arial,','Main,'+custom['caption_font']+',')
+    font=custom.get('caption_font') or STYLE_FONTS.get(style)
+    if font:ass[7]=ass[7].replace('Main,Arial,','Main,'+font+',')
     font_size=custom.get('caption_size',STYLES.get(style,('','','',58,0))[3])
-    srt=[];groups=group_words(words,max_words=custom.get('caption_max_words',4),max_chars=int((width-100*width/1080)/(font_size*scale*0.62)))
+    line_pop=LINE_POP.get(style) if anim=='highlight' else None
+    srt=[];groups=group_words(words,max_words=custom.get('caption_max_words',STYLE_WORDS.get(style,4)),max_chars=int((width-100*width/1080)/(font_size*scale*0.62)))
     for i,group in enumerate(groups):
         if not group:continue
         begin=group[0]['start'];end=group[-1]['end']
@@ -203,6 +223,7 @@ def write(words,style,folder,name,hook='',position=1450,hook_y=300,width=1080,he
                     chunks.append('{'+BS+'c'+active+BS+'fscx100'+BS+'fscy100'+BS+'t(0,110,'+BS+'fscx'+pp+BS+'fscy'+pp+')'+BS+'t(110,230,'+BS+'fscx100'+BS+'fscy100)}'+t+'{'+BS+'fscx100'+BS+'fscy100}')
                 else:chunks.append('{'+BS+'c'+(active if newest else rest)+'}'+t)
             lead=(BS+'fscx82'+BS+'fscy82'+BS+'t(0,140,'+BS+'fscx100'+BS+'fscy100)'+BS+'fad(80,0)') if (anim=='pop_in_line' and n==0) else ''
+            if line_pop and n==0:lead=BS+f'fscx{line_pop[0]}'+BS+f'fscy{line_pop[0]}'+BS+f't(0,{line_pop[1]},'+BS+'fscx100'+BS+'fscy100)'
             text='{'+pos+lead+'}'+' '.join(chunks)
             ass.append(f'Dialogue: 1,{stamp(a,True)},{stamp(b,True)},Main,,0,0,0,,{text}')
     if hook.strip():

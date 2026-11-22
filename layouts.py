@@ -34,6 +34,17 @@ def text_positions(name, top=.32, caption_y=1450, width=1080, height=1920):
     if caption_y==1450 and cam and cam['y']>900*height/1920:position=min(position,cam['y']-120*height/1920)
     return {'hook_y':round(hook_y),'caption_y':round(position)}
 
+def seam_y(name, top=.32, width=1080, height=1920, source_aspect=16 / 9):
+    """Where the facecam meets the gameplay (stack / bottom), or the top edge of the picture on the blurred fill (blur).
+    Captions centred on that edge sit between the face and the game, covering neither. None for other layouts."""
+    if name in ('stack', 'bottom'):
+        h = int(float(top) * height) // 2 * 2
+        return h if name == 'stack' else height - h
+    if name == 'blur':
+        picture = min(height, round(width / max(source_aspect, 1e-6)))
+        return max(0, (height - picture) // 2)
+    return None
+
 def geometry(name, top=.32, width=1080, height=1920):
     if name not in {x[0] for x in CATALOG}:raise ValueError('Choose a valid layout.')
     top=float(top)
